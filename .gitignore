@@ -1,0 +1,27 @@
+node_modules
+dist
+.DS_Store
+server/public
+vite.config.ts.*
+*.tar.gz
+
+# SQLite database (personal financial data)
+*.db
+*.db-shm
+*.db-wal
+
+# Personal bank statements and exports
+Statements/
+txns.json
+debug_pdf_text.txt
+financial_breakdown.md
+
+# Personal financial plan (contains account balances and private details)
+PLAN.md
+
+# Local Claude Code session settings
+.claude/
+
+# Environment / secrets
+.env
+.env.*
