@@ -681,14 +681,19 @@ export async function registerRoutes(
     );
     const totalCurrentBalance = liquidAccounts.reduce((s, a) => s + (a.currentBalance ?? 0), 0);
 
-    // ── Detect recurring patterns (same logic as /api/analytics/recurring) ──
+    // ── Detect recurring patterns ────────────────────────────────────────────
+    // Key = accountId|merchantName so that the same employer depositing into
+    // two different accounts (e.g. Chase + BofA payroll splits) is tracked
+    // independently. Without this, the two very different salary amounts
+    // collapse into one group and the smaller one is filtered out.
     const merchantGroups: Record<string, typeof allTxns> = {};
     for (const tx of allTxns) {
       if (NON_MERCHANT_CATEGORIES.has(tx.category)) continue;
       const name = normalizeMerchantName(tx);
       if (!name) continue;
-      if (!merchantGroups[name]) merchantGroups[name] = [];
-      merchantGroups[name].push(tx);
+      const key = `${tx.accountId}|${name}`;
+      if (!merchantGroups[key]) merchantGroups[key] = [];
+      merchantGroups[key].push(tx);
     }
 
     const median = (nums: number[]) => {
@@ -709,7 +714,8 @@ export async function registerRoutes(
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    for (const [merchant, txs] of Object.entries(merchantGroups)) {
+    for (const [key, txs] of Object.entries(merchantGroups)) {
+      const merchant = key.split("|").slice(1).join("|");
       if (txs.length < 3) continue;
       txs.sort((a, b) => (b.date > a.date ? 1 : -1));
 
@@ -742,6 +748,14 @@ export async function registerRoutes(
       const isIncome = txs[0].amount > 0;
       const intervalDays = isWeekly2 ? 7 : isTwiceMonthly2 ? 15 : isMonthly2 ? 30 : 365;
 
+      // For income: use the average of the 2 most recent paychecks so that
+      // post-raise amounts are reflected rather than the historical median.
+      // For expenses: median is the right anchor (subscriptions are stable).
+      const recentTwo = cadenceTxs.slice(0, 2);
+      const projectedAmount = isIncome
+        ? recentTwo.reduce((s, t) => s + Math.abs(t.amount), 0) / recentTwo.length
+        : medAmount;
+
       // Project forward: first occurrence = lastDate + interval
       let nextDate = new Date(cadenceTxs[0].date + "T00:00:00");
       nextDate.setDate(nextDate.getDate() + intervalDays);
@@ -754,7 +768,7 @@ export async function registerRoutes(
           projectedEvents.push({
             date: nextDate.toISOString().split("T")[0],
             label: merchant,
-            amount: isIncome ? medAmount : -medAmount,
+            amount: isIncome ? projectedAmount : -projectedAmount,
             type: isIncome ? "income" : "expense",
             category: txs[0].category,
           });
