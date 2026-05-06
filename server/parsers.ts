@@ -14,7 +14,7 @@ const CATEGORY_KEYWORDS: Array<{ category: string; keywords: string[] }> = [
     keywords: [
       "public partn-osv", "public partnerships", "payroll", "direct deposit",
       "salary", "wages", "paycheck", "cashreward", "cashback", "cash reward",
-      "bankamerideals", "new checking",
+      "bankamerideals", "new checking", "daily cash adjustment",
     ],
   },
   {
@@ -30,6 +30,14 @@ const CATEGORY_KEYWORDS: Array<{ category: string; keywords: string[] }> = [
       "apple card", "online banking payment to crd",
       "mobile banking payment to crd", "online scheduled payment to crd",
       "loan_pmt", "payment thank you", "payment thank",
+      "payment from chk", "online payment from chk",
+      "online scheduled payment from chk",
+    ],
+  },
+  {
+    category: "Subscriptions",
+    keywords: [
+      "robinhood gold",
     ],
   },
   {
@@ -44,7 +52,18 @@ const CATEGORY_KEYWORDS: Array<{ category: string; keywords: string[] }> = [
       "self transfer", "self account transfer", "self tranfer",
       "online banking transfer to sav", "agent assisted transfer from sav",
       "transfer to sav", "transfer from sav",
+      "ach deposit internet transfer from account ending",
       "monthly service charge refund",
+    ],
+  },
+  // Refund/Return must come BEFORE Taxes — "IRS TREAS 310 TAX REF" would
+  // otherwise match the "irs" keyword in Taxes and be misclassified.
+  {
+    category: "Refund/Return",
+    keywords: [
+      "(return)", "dispute credit", "(dispute credit)",
+      "annual hotel credit", "annual membership credit",
+      "irs treas 310", "treas 310 tax ref", "casttaxrfd", "franchise tax bd",
     ],
   },
   {
@@ -65,13 +84,6 @@ const CATEGORY_KEYWORDS: Array<{ category: string; keywords: string[] }> = [
     category: "Peer Payment",
     keywords: [
       "zelle payment", "zelle", "venmo", "paypal", "cash app", "quickpay",
-    ],
-  },
-  {
-    category: "Refund/Return",
-    keywords: [
-      "(return)", "dispute credit", "(dispute credit)",
-      "annual hotel credit", "annual membership credit",
     ],
   },
 
@@ -222,7 +234,9 @@ const CATEGORY_KEYWORDS: Array<{ category: string; keywords: string[] }> = [
  * between own accounts by checking for known name patterns.
  */
 export function inferCategory(description: string, merchant?: string | null): string {
-  const text = `${description} ${merchant ?? ""}`.toLowerCase();
+  // Collapse runs of whitespace so multi-space bank descriptions like
+  // "IRS  TREAS 310     TAX REF" still match keywords with single spaces.
+  const text = `${description} ${merchant ?? ""}`.toLowerCase().replace(/\s+/g, " ");
 
   // --- Special Zelle self-transfer detection ---
   // Zelle transfers to/from the account holder's own name at another bank

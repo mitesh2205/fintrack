@@ -22,6 +22,7 @@ export const transactions = sqliteTable("transactions", {
   amount: real("amount").notNull(), // negative = expense, positive = income
   type: text("type").notNull(), // debit or credit
   originalDescription: text("original_description"),
+  categoryLocked: text("category_locked"), // "1" = user-set, skip auto-recategorize
 });
 
 export const budgets = sqliteTable("budgets", {
