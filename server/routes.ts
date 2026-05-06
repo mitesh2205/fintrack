@@ -609,12 +609,19 @@ export async function registerRoutes(
       if (avgDays < 5) continue;
 
       // Cadence must match a recognized recurring band — drop "Variable".
-      const isMonthly = avgDays >= 25 && avgDays <= 35;
-      const isWeekly = avgDays >= 6 && avgDays <= 10;
-      const isAnnual = avgDays >= 350 && avgDays <= 380;
-      if (!isMonthly && !isWeekly && !isAnnual) continue;
+      // "Twice Monthly" catches subscriptions billed on two cards/cycles
+      // (e.g. Claude.ai charged on the 15th and 28th from different cards,
+      // producing an average interval of ~15 days).
+      const isWeekly       = avgDays >= 6   && avgDays <= 10;
+      const isTwiceMonthly = avgDays >= 11  && avgDays <= 18;
+      const isMonthly      = avgDays >= 25  && avgDays <= 35;
+      const isAnnual       = avgDays >= 350 && avgDays <= 380;
+      if (!isWeekly && !isTwiceMonthly && !isMonthly && !isAnnual) continue;
 
-      const frequency = isMonthly ? "Monthly" : isWeekly ? "Weekly" : "Annually";
+      const frequency = isWeekly ? "Weekly"
+        : isTwiceMonthly ? "Twice Monthly"
+        : isMonthly      ? "Monthly"
+        :                  "Annually";
 
       // Drop subscriptions that look inactive — last transaction is more than
       // one full cycle overdue (e.g. 60+ days since last monthly charge).
@@ -623,15 +630,15 @@ export async function registerRoutes(
       if (daysSinceLast > avgDays * 2) continue;
 
       // Predict next occurrence from the most recent cadence transaction
+      const intervalDaysForNext = isWeekly ? 7 : isTwiceMonthly ? 15 : isMonthly ? 30 : 365;
       const lastDate = new Date(cadenceTxs[0].date);
-      if (isMonthly) lastDate.setMonth(lastDate.getMonth() + 1);
-      else if (isWeekly) lastDate.setDate(lastDate.getDate() + 7);
-      else lastDate.setFullYear(lastDate.getFullYear() + 1);
+      lastDate.setDate(lastDate.getDate() + intervalDaysForNext);
       const nextExpectedDate = lastDate.toISOString().split("T")[0];
 
       const annualizedCost = Math.round((
-        frequency === "Monthly" ? medAmount * 12 :
-        frequency === "Weekly"  ? medAmount * 52 :
+        isWeekly       ? medAmount * 52 :
+        isTwiceMonthly ? medAmount * 24 :
+        isMonthly      ? medAmount * 12 :
         medAmount
       ) * 100) / 100;
 
@@ -723,16 +730,17 @@ export async function registerRoutes(
       const avgDays = totalD / (cadenceTxs.length - 1);
       if (avgDays < 5) continue;
 
-      const isMonthly = avgDays >= 25 && avgDays <= 35;
-      const isWeekly  = avgDays >= 6  && avgDays <= 10;
-      const isAnnual  = avgDays >= 350 && avgDays <= 380;
-      if (!isMonthly && !isWeekly && !isAnnual) continue;
+      const isWeekly2       = avgDays >= 6   && avgDays <= 10;
+      const isTwiceMonthly2 = avgDays >= 11  && avgDays <= 18;
+      const isMonthly2      = avgDays >= 25  && avgDays <= 35;
+      const isAnnual2       = avgDays >= 350 && avgDays <= 380;
+      if (!isWeekly2 && !isTwiceMonthly2 && !isMonthly2 && !isAnnual2) continue;
 
       const daysSinceLast = (Date.now() - new Date(cadenceTxs[0].date).getTime()) / 86400000;
       if (daysSinceLast > avgDays * 2) continue;
 
       const isIncome = txs[0].amount > 0;
-      const intervalDays = isMonthly ? 30 : isWeekly ? 7 : 365;
+      const intervalDays = isWeekly2 ? 7 : isTwiceMonthly2 ? 15 : isMonthly2 ? 30 : 365;
 
       // Project forward: first occurrence = lastDate + interval
       let nextDate = new Date(cadenceTxs[0].date + "T00:00:00");

@@ -10,7 +10,7 @@ import { AlertTriangle, Calendar, Clock, DollarSign, RefreshCw, TrendingUp } fro
 interface SubscriptionItem {
   merchant: string;
   amount: number;
-  frequency: "Monthly" | "Weekly" | "Annually";
+  frequency: "Monthly" | "Twice Monthly" | "Weekly" | "Annually";
   count: number;
   avgDaysBetween: number;
   nextExpectedDate: string;
@@ -76,9 +76,10 @@ function getCategoryEmoji(category: string): string {
 }
 
 const FREQ_COLORS: Record<string, string> = {
-  Monthly:  "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
-  Weekly:   "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
-  Annually: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+  Monthly:        "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+  "Twice Monthly": "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20",
+  Weekly:         "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
+  Annually:       "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
 };
 
 function FreqBadge({ frequency }: { frequency: string }) {
@@ -203,7 +204,7 @@ function SubscriptionCard({ item }: { item: SubscriptionItem }) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-type FreqFilter = "All" | "Monthly" | "Weekly" | "Annually";
+type FreqFilter = "All" | "Monthly" | "Twice Monthly" | "Weekly" | "Annually";
 
 export default function Subscriptions() {
   const [freqFilter, setFreqFilter] = useState<FreqFilter>("All");
@@ -216,21 +217,29 @@ export default function Subscriptions() {
   const totalAnnualCost = data?.totalAnnualCost ?? 0;
 
   const stats = useMemo(() => {
-    const monthly  = items.filter((i) => i.frequency === "Monthly");
-    const weekly   = items.filter((i) => i.frequency === "Weekly");
-    const annually = items.filter((i) => i.frequency === "Annually");
-    const upcomingIn7 = items.filter((i) => {
+    const monthly      = items.filter((i) => i.frequency === "Monthly");
+    const twiceMonthly = items.filter((i) => i.frequency === "Twice Monthly");
+    const weekly       = items.filter((i) => i.frequency === "Weekly");
+    const annually     = items.filter((i) => i.frequency === "Annually");
+    const upcomingIn7  = items.filter((i) => {
       const d = daysUntil(i.nextExpectedDate);
       return d >= 0 && d <= 7;
     });
+    // Monthly fixed = true monthly + twice-monthly (each occurrence)
+    const monthlyFixedTotal = Math.round((
+      monthly.reduce((s, i) => s + i.amount, 0) +
+      twiceMonthly.reduce((s, i) => s + i.amount * 2, 0) +
+      weekly.reduce((s, i) => s + i.amount * 4.33, 0)
+    ) * 100) / 100;
 
     return {
-      monthlyTotal:  Math.round(monthly.reduce((s, i) => s + i.amount, 0) * 100) / 100,
-      weeklyTotal:   Math.round(weekly.reduce((s, i) => s + i.amount, 0) * 100) / 100,
-      annuallyCount: annually.length,
-      upcomingIn7:   upcomingIn7.length,
-      monthlyCount:  monthly.length,
-      weeklyCount:   weekly.length,
+      monthlyTotal:      monthlyFixedTotal,
+      weeklyTotal:       Math.round(weekly.reduce((s, i) => s + i.amount, 0) * 100) / 100,
+      upcomingIn7:       upcomingIn7.length,
+      monthlyCount:      monthly.length,
+      twiceMonthlyCount: twiceMonthly.length,
+      weeklyCount:       weekly.length,
+      annuallyCount:     annually.length,
     };
   }, [items]);
 
@@ -239,7 +248,7 @@ export default function Subscriptions() {
     [items, freqFilter]
   );
 
-  const FILTERS: FreqFilter[] = ["All", "Monthly", "Weekly", "Annually"];
+  const FILTERS: FreqFilter[] = ["All", "Monthly", "Twice Monthly", "Weekly", "Annually"];
 
   return (
     <div className="min-h-screen bg-background">
