@@ -78,7 +78,10 @@ export async function registerRoutes(
   });
 
   app.patch("/api/transactions/:id", async (req, res) => {
-    const updated = await storage.updateTransaction(req.params.id, req.body);
+    const body = { ...req.body };
+    // If the user is changing the category, lock it so recategorize won't override.
+    if (body.category !== undefined) body.categoryLocked = "1";
+    const updated = await storage.updateTransaction(req.params.id, body);
     if (!updated) return res.status(404).json({ error: "Not found" });
     res.json(updated);
   });
@@ -570,8 +573,8 @@ export async function registerRoutes(
     const recurring = [];
 
     for (const [merchant, txs] of Object.entries(merchantGroups)) {
-      // Need at least 3 occurrences to call something recurring
-      if (txs.length < 3) continue;
+      // Need at least 2 occurrences (annual charges only get 1 data point per year)
+      if (txs.length < 2) continue;
 
       // Sort by date descending (most recent first)
       txs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -593,7 +596,7 @@ export async function registerRoutes(
         const a = Math.abs(t.amount);
         return a >= medAmount * 0.5 && a <= medAmount * 2;
       });
-      if (cadenceTxs.length < 3) continue;
+      if (cadenceTxs.length < 2) continue;
 
       // Average days between consecutive same-magnitude transactions
       let totalDays = 0;
@@ -617,6 +620,10 @@ export async function registerRoutes(
       const isMonthly      = avgDays >= 25  && avgDays <= 35;
       const isAnnual       = avgDays >= 350 && avgDays <= 380;
       if (!isWeekly && !isTwiceMonthly && !isMonthly && !isAnnual) continue;
+
+      // Annual charges appear only once per year so 2 occurrences is enough.
+      // All shorter cadences require 3+ to avoid false positives.
+      if (!isAnnual && cadenceTxs.length < 3) continue;
 
       const frequency = isWeekly ? "Weekly"
         : isTwiceMonthly ? "Twice Monthly"
@@ -848,16 +855,33 @@ export async function registerRoutes(
   });
 
   // === RE-CATEGORIZE existing transactions with updated rules ===
+  // Spending categories where a positive-amount transaction is almost always
+  // a refund (e.g. Amazon $400 credit = return, not income).
+  const SPENDING_CATEGORIES = new Set([
+    "Shopping", "Groceries", "Travel", "Food & Dining", "Entertainment",
+    "Health & Fitness", "Transportation", "Bills & Utilities", "Education",
+    "Business", "Software", "Streaming", "Subscriptions", "Telecommunications",
+    "Utilities", "Insurance",
+  ]);
+
   app.post("/api/recategorize", async (_req, res) => {
     try {
       const transactions = await storage.getTransactions({});
       let updated = 0;
 
       for (const tx of transactions) {
-        const newCategory = inferCategory(
+        // Skip transactions the user has manually categorized.
+        if (tx.categoryLocked === "1") continue;
+
+        let newCategory = inferCategory(
           tx.description + " " + (tx.originalDescription ?? ""),
           tx.merchant
         );
+        // Positive amount in a spending category = refund (descriptions match
+        // the original purchase, so this can't be detected upstream).
+        if (tx.amount > 0 && SPENDING_CATEGORIES.has(newCategory)) {
+          newCategory = "Refund/Return";
+        }
         if (newCategory !== tx.category) {
           await storage.updateTransaction(tx.id, { category: newCategory });
           updated++;
