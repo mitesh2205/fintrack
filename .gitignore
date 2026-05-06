@@ -25,3 +25,4 @@ PLAN.md
 # Environment / secrets
 .env
 .env.*
+server.log
