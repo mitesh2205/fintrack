@@ -183,7 +183,7 @@ export default function Insights() {
     : 20;
 
   // Group by category for scatter series
-  const categories = [...new Set(scatterMerchants.map((m) => m.category))];
+  const categories = Array.from(new Set(scatterMerchants.map((m) => m.category)));
   const scatterSeries = categories.map((cat) => ({
     cat,
     data: scatterMerchants.filter((m) => m.category === cat),

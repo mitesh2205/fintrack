@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { parseCSV, parsePDFText, detectInstitution, inferCategory } from "./parsers";
+import type { Transaction } from "@shared/schema";
 import multer from "multer";
 
 // Categories that represent money moving between own accounts —
@@ -367,7 +368,7 @@ export async function registerRoutes(
       }
     }
 
-    const allMonths = [...allMonthSet].sort();
+    const allMonths = Array.from(allMonthSet).sort();
     const round = (n: number) => Math.round(n * 100) / 100;
 
     const platforms = Object.entries(platformMap).map(([name, p]) => ({
@@ -468,9 +469,9 @@ export async function registerRoutes(
     }
 
     // All months across all accounts, sorted
-    const allMonths = [...new Set(
+    const allMonths = Array.from(new Set(
       Object.values(agg).flatMap((a) => Object.keys(a.monthMap))
-    )].sort();
+    )).sort();
 
     // Per-account summary objects
     const accounts = allAccounts.map((acct) => {
@@ -872,7 +873,7 @@ export async function registerRoutes(
 
       const toDelete: string[] = [];
 
-      for (const [_fp, ids] of groups) {
+      for (const [_fp, ids] of Array.from(groups)) {
         if (ids.length <= 1) continue;
 
         // If count is even, it was likely uploaded twice → keep half

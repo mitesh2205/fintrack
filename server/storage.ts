@@ -93,7 +93,7 @@ function applyDedup(
 
   // Step 3: allowance per fingerprint
   const allowance = new Map<string, number>();
-  for (const [fp, count] of incomingCounts) {
+  for (const [fp, count] of Array.from(incomingCounts)) {
     allowance.set(fp, Math.max(0, count - (dbCounts.get(fp) ?? 0)));
   }
 
@@ -192,7 +192,7 @@ class DrizzleStorage implements IStorage {
 
     // Fetch existing transactions for only the affected accounts so dedup
     // doesn't have to scan the full table.
-    const accountIds = [...new Set(data.map((d) => d.accountId))];
+    const accountIds = Array.from(new Set(data.map((d) => d.accountId)));
     const existing =
       accountIds.length === 1
         ? await this.db.select().from(transactions).where(eq(transactions.accountId, accountIds[0]))
@@ -377,7 +377,7 @@ class MemStorage implements IStorage {
   async deleteTransaction(id: string) { this.transactions.delete(id); }
 
   async deleteTransactionsByAccount(accountId: string) {
-    for (const [id, tx] of this.transactions.entries()) {
+    for (const [id, tx] of Array.from(this.transactions.entries())) {
       if (tx.accountId === accountId) this.transactions.delete(id);
     }
   }

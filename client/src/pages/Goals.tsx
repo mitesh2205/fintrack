@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -96,8 +96,7 @@ function GoalFormDialog({
   saving: boolean;
 }) {
   const [form, setForm] = useState<GoalFormState>(initial);
-  // reset when dialog opens
-  useMemo(() => { if (open) setForm(initial); }, [open, initial]);
+  useEffect(() => { if (open) setForm(initial); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (k: keyof GoalFormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -313,7 +312,7 @@ function AddSavingsDialog({
 }) {
   const [amount, setAmount] = useState("");
 
-  useMemo(() => { if (goal) setAmount(""); }, [goal?.id]);
+  useEffect(() => { if (goal) setAmount(""); }, [goal?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!goal) return null;
   const addAmt = parseFloat(amount) || 0;
