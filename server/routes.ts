@@ -154,6 +154,32 @@ export async function registerRoutes(
     res.json({ ok: true });
   });
 
+  // === GOALS ===
+  app.get("/api/goals", async (_req, res) => {
+    const data = await storage.getGoals();
+    res.json(data);
+  });
+
+  app.post("/api/goals", async (req, res) => {
+    try {
+      const goal = await storage.createGoal(req.body);
+      res.json(goal);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/goals/:id", async (req, res) => {
+    const updated = await storage.updateGoal(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ error: "Not found" });
+    res.json(updated);
+  });
+
+  app.delete("/api/goals/:id", async (req, res) => {
+    await storage.deleteGoal(req.params.id);
+    res.json({ ok: true });
+  });
+
   // === ANALYTICS ===
   app.get("/api/analytics/summary", async (req, res) => {
     const { startDate, endDate } = req.query as any;
@@ -602,6 +628,12 @@ export async function registerRoutes(
       else lastDate.setFullYear(lastDate.getFullYear() + 1);
       const nextExpectedDate = lastDate.toISOString().split("T")[0];
 
+      const annualizedCost = Math.round((
+        frequency === "Monthly" ? medAmount * 12 :
+        frequency === "Weekly"  ? medAmount * 52 :
+        medAmount
+      ) * 100) / 100;
+
       recurring.push({
         merchant,
         amount: medAmount,
@@ -609,13 +641,187 @@ export async function registerRoutes(
         count: txs.length,
         avgDaysBetween: Math.round(avgDays),
         nextExpectedDate,
+        category: txs[0].category,
+        lastChargedDate: cadenceTxs[0].date,
+        daysSinceLastCharge: Math.round(daysSinceLast),
+        annualizedCost,
+        amountIncreased: Math.abs(txs[0].amount) > medAmount * 1.1,
       });
     }
 
-    // Sort by amount descending
-    recurring.sort((a, b) => b.amount - a.amount);
+    // Sort by annualized cost descending
+    recurring.sort((a, b) => b.annualizedCost - a.annualizedCost);
+    const totalAnnualCost = Math.round(
+      recurring.reduce((s, r) => s + r.annualizedCost, 0) * 100
+    ) / 100;
 
-    res.json(recurring);
+    res.json({ items: recurring, totalAnnualCost });
+  });
+
+  // === CASH FLOW FORECAST ===
+  app.get("/api/analytics/cashflow", async (req, res) => {
+    const days = Math.min(180, Math.max(7, parseInt((req.query.days as string) ?? "90") || 90));
+
+    const [allAccounts, allTxns] = await Promise.all([
+      storage.getAccounts(),
+      storage.getTransactions({}),
+    ]);
+
+    // Only checking/savings accounts with a known balance participate in projection
+    const liquidAccounts = allAccounts.filter(
+      (a) => (a.type === "checking" || a.type === "savings") && a.currentBalance != null
+    );
+    const totalCurrentBalance = liquidAccounts.reduce((s, a) => s + (a.currentBalance ?? 0), 0);
+
+    // ── Detect recurring patterns (same logic as /api/analytics/recurring) ──
+    const merchantGroups: Record<string, typeof allTxns> = {};
+    for (const tx of allTxns) {
+      if (NON_MERCHANT_CATEGORIES.has(tx.category)) continue;
+      const name = normalizeMerchantName(tx);
+      if (!name) continue;
+      if (!merchantGroups[name]) merchantGroups[name] = [];
+      merchantGroups[name].push(tx);
+    }
+
+    const median = (nums: number[]) => {
+      const s = [...nums].sort((a, b) => a - b);
+      const m = Math.floor(s.length / 2);
+      return s.length % 2 === 0 ? (s[m - 1] + s[m]) / 2 : s[m];
+    };
+
+    interface ProjectedEvent {
+      date: string;
+      label: string;
+      amount: number;  // negative = expense, positive = income
+      type: "income" | "expense" | "transfer";
+      category: string;
+    }
+
+    const projectedEvents: ProjectedEvent[] = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    for (const [merchant, txs] of Object.entries(merchantGroups)) {
+      if (txs.length < 3) continue;
+      txs.sort((a, b) => (b.date > a.date ? 1 : -1));
+
+      const amounts = txs.map((t) => Math.abs(t.amount));
+      const medAmount = median(amounts);
+      if (medAmount <= 0) continue;
+
+      const cadenceTxs = txs.filter((t) => {
+        const a = Math.abs(t.amount);
+        return a >= medAmount * 0.5 && a <= medAmount * 2;
+      });
+      if (cadenceTxs.length < 3) continue;
+
+      let totalD = 0;
+      for (let i = 0; i < cadenceTxs.length - 1; i++) {
+        totalD += (new Date(cadenceTxs[i].date).getTime() - new Date(cadenceTxs[i + 1].date).getTime()) / 86400000;
+      }
+      const avgDays = totalD / (cadenceTxs.length - 1);
+      if (avgDays < 5) continue;
+
+      const isMonthly = avgDays >= 25 && avgDays <= 35;
+      const isWeekly  = avgDays >= 6  && avgDays <= 10;
+      const isAnnual  = avgDays >= 350 && avgDays <= 380;
+      if (!isMonthly && !isWeekly && !isAnnual) continue;
+
+      const daysSinceLast = (Date.now() - new Date(cadenceTxs[0].date).getTime()) / 86400000;
+      if (daysSinceLast > avgDays * 2) continue;
+
+      const isIncome = txs[0].amount > 0;
+      const intervalDays = isMonthly ? 30 : isWeekly ? 7 : 365;
+
+      // Project forward: first occurrence = lastDate + interval
+      let nextDate = new Date(cadenceTxs[0].date + "T00:00:00");
+      nextDate.setDate(nextDate.getDate() + intervalDays);
+
+      const horizonDate = new Date(today);
+      horizonDate.setDate(horizonDate.getDate() + days);
+
+      while (nextDate <= horizonDate) {
+        if (nextDate >= today) {
+          projectedEvents.push({
+            date: nextDate.toISOString().split("T")[0],
+            label: merchant,
+            amount: isIncome ? medAmount : -medAmount,
+            type: isIncome ? "income" : "expense",
+            category: txs[0].category,
+          });
+        }
+        nextDate = new Date(nextDate);
+        nextDate.setDate(nextDate.getDate() + intervalDays);
+      }
+    }
+
+    // Sort events by date
+    projectedEvents.sort((a, b) => (a.date > b.date ? 1 : -1));
+
+    // ── Build daily balance projection ──────────────────────────────────────
+    // Group events by date
+    const eventsByDate: Record<string, ProjectedEvent[]> = {};
+    for (const ev of projectedEvents) {
+      if (!eventsByDate[ev.date]) eventsByDate[ev.date] = [];
+      eventsByDate[ev.date].push(ev);
+    }
+
+    const safeFloor = 500; // configurable in future
+    const dailyBalances: Array<{
+      date: string;
+      balance: number;
+      delta: number;
+      zone: "safe" | "watch" | "danger";
+      events: ProjectedEvent[];
+    }> = [];
+
+    let runningBalance = totalCurrentBalance;
+    const todayStr = today.toISOString().split("T")[0];
+
+    for (let i = 0; i <= days; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() + i);
+      const dateStr = d.toISOString().split("T")[0];
+
+      const dayEvents = eventsByDate[dateStr] ?? [];
+      const delta = dayEvents.reduce((s, e) => s + e.amount, 0);
+      runningBalance += delta;
+
+      const zone: "safe" | "watch" | "danger" =
+        runningBalance < safeFloor * 0.5 ? "danger" :
+        runningBalance < safeFloor        ? "watch"  : "safe";
+
+      dailyBalances.push({ date: dateStr, balance: Math.round(runningBalance * 100) / 100, delta: Math.round(delta * 100) / 100, zone, events: dayEvents });
+    }
+
+    // ── Summary ─────────────────────────────────────────────────────────────
+    const minBalance = Math.min(...dailyBalances.map((d) => d.balance));
+    const dangerDays = dailyBalances.filter((d) => d.zone === "danger").length;
+    const watchDays  = dailyBalances.filter((d) => d.zone === "watch").length;
+    const firstDanger = dailyBalances.find((d) => d.zone === "danger");
+
+    // Upcoming events in next 14 days (for the event timeline)
+    const next14 = new Date(today);
+    next14.setDate(next14.getDate() + 14);
+    const upcomingEvents = projectedEvents
+      .filter((e) => e.date >= todayStr && e.date <= next14.toISOString().split("T")[0])
+      .slice(0, 20);
+
+    res.json({
+      currentBalance: Math.round(totalCurrentBalance * 100) / 100,
+      safeFloor,
+      days,
+      dailyBalances,
+      upcomingEvents,
+      summary: {
+        minBalance: Math.round(minBalance * 100) / 100,
+        dangerDays,
+        watchDays,
+        firstDangerDate: firstDanger?.date ?? null,
+        projectedEventCount: projectedEvents.length,
+        liquidAccountCount: liquidAccounts.length,
+      },
+    });
   });
 
   // === RE-CATEGORIZE existing transactions with updated rules ===

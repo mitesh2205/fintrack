@@ -5,8 +5,10 @@ import type {
   InsertTransaction,
   Budget,
   InsertBudget,
+  Goal,
+  InsertGoal,
 } from "@shared/schema";
-import { accounts, transactions, budgets } from "@shared/schema";
+import { accounts, transactions, budgets, goals } from "@shared/schema";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { eq, gte, lte, and, inArray, desc } from "drizzle-orm";
@@ -40,6 +42,12 @@ export interface IStorage {
   createBudget(data: InsertBudget): Promise<Budget>;
   updateBudget(id: string, data: Partial<InsertBudget>): Promise<Budget | null>;
   deleteBudget(id: string): Promise<void>;
+
+  // Goals
+  getGoals(): Promise<Goal[]>;
+  createGoal(data: InsertGoal): Promise<Goal>;
+  updateGoal(id: string, data: Partial<InsertGoal>): Promise<Goal | null>;
+  deleteGoal(id: string): Promise<void>;
 }
 
 // ─── Shared dedup fingerprint (used by both implementations) ─────────────────
@@ -272,6 +280,39 @@ class DrizzleStorage implements IStorage {
   async deleteBudget(id: string): Promise<void> {
     await this.db.delete(budgets).where(eq(budgets.id, id));
   }
+
+  // ── Goals ────────────────────────────────────────────────────────────────────
+
+  async getGoals(): Promise<Goal[]> {
+    return this.db.select().from(goals);
+  }
+
+  async createGoal(data: InsertGoal): Promise<Goal> {
+    const id = crypto.randomUUID();
+    const row = {
+      id,
+      name: data.name,
+      targetAmount: data.targetAmount,
+      savedAmount: data.savedAmount ?? 0,
+      deadline: data.deadline ?? null,
+      icon: data.icon ?? null,
+      color: data.color ?? null,
+      note: data.note ?? null,
+    };
+    await this.db.insert(goals).values(row);
+    return row;
+  }
+
+  async updateGoal(id: string, data: Partial<InsertGoal>): Promise<Goal | null> {
+    const [existing] = await this.db.select().from(goals).where(eq(goals.id, id));
+    if (!existing) return null;
+    await this.db.update(goals).set(data).where(eq(goals.id, id));
+    return { ...existing, ...data };
+  }
+
+  async deleteGoal(id: string): Promise<void> {
+    await this.db.delete(goals).where(eq(goals.id, id));
+  }
 }
 
 // ─── MemStorage (kept as fallback) ──────────────────────────────────────────
@@ -360,6 +401,31 @@ class MemStorage implements IStorage {
   }
 
   async deleteBudget(id: string) { this.budgets.delete(id); }
+
+  private goals: Map<string, Goal> = new Map();
+
+  async getGoals() { return Array.from(this.goals.values()); }
+
+  async createGoal(data: InsertGoal): Promise<Goal> {
+    const id = crypto.randomUUID();
+    const goal: Goal = {
+      id, name: data.name, targetAmount: data.targetAmount,
+      savedAmount: data.savedAmount ?? 0, deadline: data.deadline ?? null,
+      icon: data.icon ?? null, color: data.color ?? null, note: data.note ?? null,
+    };
+    this.goals.set(id, goal);
+    return goal;
+  }
+
+  async updateGoal(id: string, data: Partial<InsertGoal>): Promise<Goal | null> {
+    const existing = this.goals.get(id);
+    if (!existing) return null;
+    const updated = { ...existing, ...data };
+    this.goals.set(id, updated);
+    return updated;
+  }
+
+  async deleteGoal(id: string) { this.goals.delete(id); }
 }
 
 // ─── Export ──────────────────────────────────────────────────────────────────

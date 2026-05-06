@@ -43,3 +43,18 @@ export type Transaction = typeof transactions.$inferSelect;
 export const insertBudgetSchema = createInsertSchema(budgets).omit({ id: true });
 export type InsertBudget = z.infer<typeof insertBudgetSchema>;
 export type Budget = typeof budgets.$inferSelect;
+
+export const goals = sqliteTable("goals", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  targetAmount: real("target_amount").notNull(),
+  savedAmount: real("saved_amount").notNull().default(0),
+  deadline: text("deadline"),     // YYYY-MM-DD, optional
+  icon: text("icon"),             // emoji
+  color: text("color"),           // hex or tailwind token
+  note: text("note"),
+});
+
+export const insertGoalSchema = createInsertSchema(goals).omit({ id: true });
+export type InsertGoal = z.infer<typeof insertGoalSchema>;
+export type Goal = typeof goals.$inferSelect;

@@ -62,6 +62,11 @@ interface RecurringExpense {
   count: number;
   avgDaysBetween: number;
   nextExpectedDate: string;
+  category: string;
+  lastChargedDate: string;
+  daysSinceLastCharge: number;
+  annualizedCost: number;
+  amountIncreased: boolean;
 }
 
 function formatCurrency(amount: number): string {
@@ -269,8 +274,19 @@ export default function Dashboard() {
     queryKey: ["/api/analytics/merchants"],
   });
 
-  const { data: recurringExpenses = [], isLoading: recurringLoading } = useQuery<RecurringExpense[]>({
+  const { data: recurringData, isLoading: recurringLoading } = useQuery<{ items: RecurringExpense[]; totalAnnualCost: number }>({
     queryKey: ["/api/analytics/recurring"],
+  });
+  const recurringExpenses = recurringData?.items ?? [];
+
+  const { data: forecastData } = useQuery<{
+    currentBalance: number;
+    safeFloor: number;
+    summary: { minBalance: number; dangerDays: number; firstDangerDate: string | null; liquidAccountCount: number };
+    upcomingEvents: { date: string; label: string; amount: number }[];
+  }>({
+    queryKey: ["/api/analytics/cashflow", 30],
+    queryFn: () => fetch("/api/analytics/cashflow?days=30").then((r) => r.json()),
   });
 
   const isLoading = summaryLoading || txLoading || acctLoading || merchantsLoading || recurringLoading;
@@ -510,6 +526,61 @@ export default function Dashboard() {
                   </p>
                 </div>
               ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 30-Day Cash Flow Snapshot */}
+      {forecastData && forecastData.summary.liquidAccountCount > 0 && (
+        <Card className="admin-card border-none shadow-sm">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base font-semibold flex items-center gap-2">
+                💰 30-Day Cash Flow Snapshot
+              </CardTitle>
+              <Link href="/forecast" className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline font-medium">
+                Full forecast →
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="flex flex-wrap gap-6 items-center">
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Current Balance</p>
+                <p className="text-xl font-bold text-foreground mt-0.5">{formatCurrency(forecastData.currentBalance)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Lowest Projected</p>
+                <p className={`text-xl font-bold mt-0.5 ${forecastData.summary.minBalance < forecastData.safeFloor ? "text-red-500" : "text-emerald-600 dark:text-emerald-400"}`}>
+                  {formatCurrency(forecastData.summary.minBalance)}
+                </p>
+              </div>
+              {forecastData.summary.dangerDays > 0 && (
+                <div className="flex items-center gap-2 rounded-lg bg-red-500/10 px-3 py-2">
+                  <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
+                  <p className="text-sm text-red-600 dark:text-red-400 font-medium">
+                    {forecastData.summary.dangerDays} day{forecastData.summary.dangerDays !== 1 ? "s" : ""} below safe floor
+                    {forecastData.summary.firstDangerDate && ` · starts ${forecastData.summary.firstDangerDate}`}
+                  </p>
+                </div>
+              )}
+              {forecastData.summary.dangerDays === 0 && (
+                <div className="flex items-center gap-2 rounded-lg bg-emerald-500/10 px-3 py-2">
+                  <TrendingUp className="h-4 w-4 text-emerald-600 flex-shrink-0" />
+                  <p className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">Balance stays above safe floor all month</p>
+                </div>
+              )}
+              {forecastData.upcomingEvents.slice(0, 3).length > 0 && (
+                <div className="ml-auto text-right hidden sm:block">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Next 7 days</p>
+                  {forecastData.upcomingEvents.slice(0, 3).map((ev, i) => (
+                    <p key={i} className={`text-xs font-mono ${ev.amount > 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                      {ev.amount > 0 ? "+" : ""}{formatCurrency(Math.abs(ev.amount))} {ev.label}
+                    </p>
+                  ))}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

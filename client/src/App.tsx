@@ -15,6 +15,9 @@ import Budgets from "@/pages/Budgets";
 import Insights from "@/pages/Insights";
 import CardBreakdown from "@/pages/CardBreakdown";
 import InvestmentBreakdown from "@/pages/InvestmentBreakdown";
+import Subscriptions from "@/pages/Subscriptions";
+import Goals from "@/pages/Goals";
+import Forecast from "@/pages/Forecast";
 
 function AppRouter() {
   return (
@@ -28,6 +31,9 @@ function AppRouter() {
         <Route path="/insights" component={Insights} />
         <Route path="/card-breakdown" component={CardBreakdown} />
         <Route path="/investments" component={InvestmentBreakdown} />
+        <Route path="/subscriptions" component={Subscriptions} />
+        <Route path="/goals" component={Goals} />
+        <Route path="/forecast" component={Forecast} />
         <Route component={NotFound} />
       </Switch>
     </AppShell>

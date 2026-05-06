@@ -13,6 +13,9 @@ import {
   Sparkles,
   CreditCard,
   TrendingUp,
+  Receipt,
+  Target,
+  Telescope,
 } from "lucide-react";
 import { useTheme } from "./ThemeProvider";
 import { Button } from "@/components/ui/button";
@@ -44,6 +47,21 @@ const navItems: NavItem[] = [
     label: "Investments",
     href: "/investments",
     icon: <TrendingUp className="h-4 w-4" />,
+  },
+  {
+    label: "Fixed Costs",
+    href: "/subscriptions",
+    icon: <Receipt className="h-4 w-4" />,
+  },
+  {
+    label: "Goals",
+    href: "/goals",
+    icon: <Target className="h-4 w-4" />,
+  },
+  {
+    label: "Forecast",
+    href: "/forecast",
+    icon: <Telescope className="h-4 w-4" />,
   },
   {
     label: "Transactions",
