@@ -193,6 +193,10 @@ export default function Upload() {
     queryClient.invalidateQueries({ queryKey: ["/api/analytics/summary"] });
     queryClient.invalidateQueries({ queryKey: ["/api/analytics/merchants"] });
     queryClient.invalidateQueries({ queryKey: ["/api/analytics/recurring"] });
+    // Imports advance the auto-balance anchor on liquid accounts → refresh
+    // accounts and cashflow so balance and runway reflect new transactions.
+    queryClient.invalidateQueries({ queryKey: ["/api/accounts"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/analytics/cashflow"] });
     const parts = [`${parsedCount} transaction${parsedCount !== 1 ? "s" : ""} imported successfully.`];
     if (skippedCount > 0) {
       parts.push(`${skippedCount} duplicate${skippedCount !== 1 ? "s" : ""} skipped.`);

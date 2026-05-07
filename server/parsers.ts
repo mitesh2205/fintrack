@@ -43,7 +43,7 @@ const CATEGORY_KEYWORDS: Array<{ category: string; keywords: string[] }> = [
   {
     category: "Investment",
     keywords: [
-      "robinhood", "apple gs savings", "dub technologies", "dub partners",
+      "robinhood", "dub technologies", "dub partners",
     ],
   },
   {
@@ -54,6 +54,7 @@ const CATEGORY_KEYWORDS: Array<{ category: string; keywords: string[] }> = [
       "transfer to sav", "transfer from sav",
       "ach deposit internet transfer from account ending",
       "monthly service charge refund",
+      "apple gs savings",
     ],
   },
   // Refund/Return must come BEFORE Taxes — "IRS TREAS 310 TAX REF" would
@@ -233,7 +234,7 @@ const CATEGORY_KEYWORDS: Array<{ category: string; keywords: string[] }> = [
  * doesn't always contain "self transfer" but we can detect transfers
  * between own accounts by checking for known name patterns.
  */
-export function inferCategory(description: string, merchant?: string | null): string {
+export function inferCategory(description: string, merchant?: string | null, amount?: number): string {
   // Collapse runs of whitespace so multi-space bank descriptions like
   // "IRS  TREAS 310     TAX REF" still match keywords with single spaces.
   const text = `${description} ${merchant ?? ""}`.toLowerCase().replace(/\s+/g, " ");
@@ -252,6 +253,12 @@ export function inferCategory(description: string, merchant?: string | null): st
     // Covers: "Zelle payment to MITESH CHHATBAR ...", "Zelle payment from MITESH M CHHATBAR ..."
     if (text.includes("mitesh chhatbar") || text.includes("mitesh m chhatbar")) {
       return "Transfer";
+    }
+    // Rent: Zelle payments to Nikita Chhatbar of $1,300+ are monthly rent.
+    // Smaller Zelles to her are reimbursements/shared costs and stay as
+    // Peer Payment via the keyword fallthrough below.
+    if (text.includes("nikita chhatbar") && amount != null && amount <= -1300) {
+      return "Rent";
     }
   }
 
@@ -567,7 +574,7 @@ export function parseChaseCSV(
       const amount = parseAmount(rawAmount);
       // Pass the Chase type (CHASE_TO_PARTNERFI, LOAN_PMT, etc.) into
       // categorization so self-transfers and card payments are detected.
-      const category = inferCategory(description + " " + chaseType);
+      const category = inferCategory(description + " " + chaseType, null, amount);
 
       transactions.push({
         accountId,
@@ -651,7 +658,7 @@ export function parseBankOfAmericaCSV(
 
       const date = parseDate(rawDate);
       const amount = parseAmount(rawAmount);
-      const category = inferCategory(payee);
+      const category = inferCategory(payee, null, amount);
 
       transactions.push({
         accountId,
@@ -689,7 +696,7 @@ export function parseBankOfAmericaCSV(
 
       const date = parseDate(rawDate);
       const amount = parseAmount(rawAmount);
-      const category = inferCategory(description);
+      const category = inferCategory(description, null, amount);
 
       transactions.push({
         accountId,
@@ -1133,7 +1140,7 @@ function parseGenericPDF(text: string, accountId: string): InsertTransaction[] {
 
     const date = parseDate(rawDate);
     const amount = parseAmount(rawAmount);
-    const category = inferCategory(description);
+    const category = inferCategory(description, null, amount);
 
     if (!description) continue;
 

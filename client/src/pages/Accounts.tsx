@@ -271,6 +271,7 @@ function AccountCard({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/analytics/cashflow"] });
       setEditingBalance(false);
       toast({ title: "Balance updated" });
     },
@@ -304,6 +305,7 @@ function AccountCard({
       queryClient.invalidateQueries({ queryKey: ["/api/accounts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
       queryClient.invalidateQueries({ queryKey: ["/api/analytics/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/analytics/cashflow"] });
       toast({ title: "Account deleted" });
     },
     onError: (error: Error) => {
