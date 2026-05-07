@@ -11,7 +11,7 @@ import type {
 import { accounts, transactions, budgets, goals } from "@shared/schema";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import { eq, gte, lte, and, inArray, desc } from "drizzle-orm";
+import { eq, gte, lte, and, inArray } from "drizzle-orm";
 import path from "path";
 
 // ─── Shared interface ────────────────────────────────────────────────────────
@@ -50,6 +50,91 @@ export interface IStorage {
   deleteGoal(id: string): Promise<void>;
 }
 
+// ─── Date helper ─────────────────────────────────────────────────────────────
+
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+// Account types whose currentBalance is auto-maintained from imports.
+// Credit cards intentionally excluded: their amount-sign convention differs
+// across institutions and the user typically reconciles via statement balance,
+// not transaction sum.
+const AUTO_BALANCE_TYPES = new Set(["checking", "savings"]);
+
+// ─── Description normalizer ──────────────────────────────────────────────────
+//
+// Extracts a canonical, format-independent key from ACH and Zelle descriptions
+// so that the same underlying transfer printed in two different statement
+// formats maps to the same fingerprint.
+//
+// Chase emits the same ACH payroll entry in at least three formats depending
+// on which export you download:
+//   Long:  "ORIG CO NAME:Acme Corp CO ENTRY DESCR:PAYROLL001 SEC:PPD ..."
+//   DES:   "Acme Corp DES:PAYROLL001 ID:xxxx INDN:Name ..."
+//   Short: "Acme Corp PAYROLL001       PPD ID: 00012345"
+// All three normalise to ach:{company}:{batch}, allowing count-based dedup to
+// block the duplicate regardless of which two formats appear in overlapping
+// statement exports.
+//
+// Returns null when no structured format is recognised (caller falls back to
+// numeric-ID extraction, then full-description matching).
+
+function canonicalizeDescription(raw: string): string | null {
+  const desc = raw.trim();
+
+  // Chase long ACH: "ORIG CO NAME:Acme Corp CO ENTRY DESCR:PAYROLL001 SEC:PPD ..."
+  const longAch = desc.match(/ORIG\s+CO\s+NAME:\s*(.+?)\s+CO\s+ENTRY\s+DESCR:\s*(\S+)/i);
+  if (longAch) {
+    const co = longAch[1].trim().toLowerCase().replace(/\s+/g, " ");
+    const batch = longAch[2].toLowerCase();
+    return `ach:${co}:${batch}`;
+  }
+
+  // Chase DES format: "Acme Corp DES:PAYROLL001 ID:xxxx INDN:Name"
+  const desAch = desc.match(/^(.+?)\s+DES:(\S+)\s+ID:/i);
+  if (desAch) {
+    const co = desAch[1].trim().toLowerCase().replace(/\s+/g, " ");
+    const batch = desAch[2].toLowerCase();
+    return `ach:${co}:${batch}`;
+  }
+
+  // Chase PPD short: "Acme Corp BATCH001       PPD ID: 00012345"
+  // The batch token is the last whitespace-separated word before the 2+-space gap.
+  const ppdAch = desc.match(/^(.+?)\s{2,}PPD\s+ID:/i);
+  if (ppdAch) {
+    const parts = ppdAch[1].trim().split(/\s+/);
+    const batch = parts.pop()!;
+    const co = parts.join(" ");
+    return `ach:${co.toLowerCase()}:${batch.toLowerCase()}`;
+  }
+
+  // Zelle JPM ID (Chase outgoing/incoming): "... JPM99abc123xyz"
+  const jpmId = desc.match(/\b(JPM[A-Z0-9]{7,})\b/i);
+  if (jpmId) {
+    return `zelle:jpm:${jpmId[1].toLowerCase()}`;
+  }
+
+  // Zelle Conf# (Chase/other): "... Conf# fc2t732b0"
+  // Require ≥8 chars — all observed values are 9; shorter values are truncated
+  // statement artefacts that shouldn't be used as stable IDs.
+  const confId = desc.match(/Conf#\s*([A-Z0-9]{8,})/i);
+  if (confId) {
+    return `zelle:conf:${confId[1].toLowerCase()}`;
+  }
+
+  // Zelle bank-prefixed IDs at end of description (BofA=BAC, NavyFed=NAV,
+  // WellsFargo=WFC, etc.): "Zelle payment from NAME BACtltq4j9n0"
+  if (/\bzelle\b/i.test(desc)) {
+    const bankId = desc.match(/\s([A-Z]{2,4}[A-Z0-9]{8,})\s*$/i);
+    if (bankId) {
+      return `zelle:id:${bankId[1].toLowerCase()}`;
+    }
+  }
+
+  return null;
+}
+
 // ─── Shared dedup fingerprint (used by both implementations) ─────────────────
 
 function txFingerprint(tx: {
@@ -58,8 +143,23 @@ function txFingerprint(tx: {
   description: string;
   amount: number;
 }): string {
-  const desc = tx.description.toLowerCase().replace(/\s+/g, " ").trim();
   const amt = Math.round(tx.amount * 100);
+
+  // Try structured normalisation first — catches the same ACH/Zelle transfer
+  // printed in two different statement formats (e.g. Chase long vs. PPD short).
+  const canonical = canonicalizeDescription(tx.description);
+  if (canonical) {
+    return `${tx.accountId}|${tx.date}|${amt}|${canonical}`;
+  }
+
+  // Fall back to long numeric IDs (ACH trace numbers, wire IDs, etc. ≥9 digits).
+  const ids = (tx.description.match(/\d{9,}/g) ?? []).sort();
+  if (ids.length > 0) {
+    return `${tx.accountId}|${tx.date}|${amt}|ids:${ids.join(",")}`;
+  }
+
+  // Default: normalise whitespace and lowercase the full description.
+  const desc = tx.description.toLowerCase().replace(/\s+/g, " ").trim();
   return `${tx.accountId}|${tx.date}|${desc}|${amt}`;
 }
 
@@ -149,6 +249,10 @@ class DrizzleStorage implements IStorage {
       lastFour: data.lastFour ?? null,
       color: data.color ?? null,
       currentBalance: data.currentBalance ?? null,
+      // Anchor today when an opening balance is provided; null otherwise.
+      balanceAsOfDate:
+        data.balanceAsOfDate ??
+        (data.currentBalance != null ? todayISO() : null),
     };
     await this.db.insert(accounts).values(row);
     return row;
@@ -157,8 +261,16 @@ class DrizzleStorage implements IStorage {
   async updateAccount(id: string, data: Partial<InsertAccount>): Promise<Account | null> {
     const [existing] = await this.db.select().from(accounts).where(eq(accounts.id, id));
     if (!existing) return null;
-    await this.db.update(accounts).set(data).where(eq(accounts.id, id));
-    return { ...existing, ...data };
+
+    // When the user manually edits currentBalance, reset the anchor to today
+    // so the next import only applies transactions newer than the edit.
+    const patch: Partial<InsertAccount> = { ...data };
+    if (data.currentBalance !== undefined && data.balanceAsOfDate === undefined) {
+      patch.balanceAsOfDate = todayISO();
+    }
+
+    await this.db.update(accounts).set(patch).where(eq(accounts.id, id));
+    return { ...existing, ...patch };
   }
 
   async deleteAccount(id: string): Promise<void> {
@@ -212,6 +324,7 @@ class DrizzleStorage implements IStorage {
       amount: item.amount,
       type: item.type,
       originalDescription: item.originalDescription ?? null,
+      categoryLocked: null,
     }));
 
     // Insert in chunks of 500 to stay within SQLite's variable limit
@@ -220,7 +333,50 @@ class DrizzleStorage implements IStorage {
       await this.db.insert(transactions).values(rows.slice(i, i + CHUNK));
     }
 
+    await this.recomputeAnchoredBalances(rows);
+
     return { created: rows, skipped };
+  }
+
+  // For each affected liquid account with a balance anchor, sum the newly
+  // inserted transactions strictly newer than the anchor, add to current
+  // balance, and advance the anchor to the latest date in this batch.
+  // No-op for accounts without a balance or anchor (e.g. credit cards, or
+  // accounts the user hasn't seeded yet).
+  private async recomputeAnchoredBalances(inserted: Transaction[]): Promise<void> {
+    if (inserted.length === 0) return;
+
+    const byAccount = new Map<string, Transaction[]>();
+    for (const r of inserted) {
+      const arr = byAccount.get(r.accountId) ?? [];
+      arr.push(r);
+      byAccount.set(r.accountId, arr);
+    }
+
+    const accountIds = Array.from(byAccount.keys());
+    const affected = await this.db
+      .select()
+      .from(accounts)
+      .where(inArray(accounts.id, accountIds));
+
+    for (const acct of affected) {
+      if (!AUTO_BALANCE_TYPES.has(acct.type)) continue;
+      if (acct.currentBalance == null) continue;
+      if (!acct.balanceAsOfDate) continue;
+
+      const anchor = acct.balanceAsOfDate;
+      const newer = (byAccount.get(acct.id) ?? []).filter((t) => t.date > anchor);
+      if (newer.length === 0) continue;
+
+      const delta = newer.reduce((s, t) => s + t.amount, 0);
+      const maxDate = newer.reduce((m, t) => (t.date > m ? t.date : m), anchor);
+      const newBalance = Math.round((acct.currentBalance + delta) * 100) / 100;
+
+      await this.db
+        .update(accounts)
+        .set({ currentBalance: newBalance, balanceAsOfDate: maxDate })
+        .where(eq(accounts.id, acct.id));
+    }
   }
 
   async updateTransaction(
@@ -326,9 +482,14 @@ class MemStorage implements IStorage {
 
   async createAccount(data: InsertAccount): Promise<Account> {
     const id = crypto.randomUUID();
-    const account: Account = { id, name: data.name, institution: data.institution,
+    const account: Account = {
+      id, name: data.name, institution: data.institution,
       type: data.type, lastFour: data.lastFour ?? null, color: data.color ?? null,
-      currentBalance: data.currentBalance ?? null };
+      currentBalance: data.currentBalance ?? null,
+      balanceAsOfDate:
+        data.balanceAsOfDate ??
+        (data.currentBalance != null ? todayISO() : null),
+    };
     this.accounts.set(id, account);
     return account;
   }
@@ -336,7 +497,11 @@ class MemStorage implements IStorage {
   async updateAccount(id: string, data: Partial<InsertAccount>): Promise<Account | null> {
     const existing = this.accounts.get(id);
     if (!existing) return null;
-    const updated = { ...existing, ...data };
+    const patch: Partial<InsertAccount> = { ...data };
+    if (data.currentBalance !== undefined && data.balanceAsOfDate === undefined) {
+      patch.balanceAsOfDate = todayISO();
+    }
+    const updated = { ...existing, ...patch };
     this.accounts.set(id, updated);
     return updated;
   }
@@ -361,8 +526,34 @@ class MemStorage implements IStorage {
       accountId: item.accountId, date: item.date, description: item.description,
       merchant: item.merchant ?? null, category: item.category, amount: item.amount,
       type: item.type, originalDescription: item.originalDescription ?? null,
+      categoryLocked: null,
     }));
     for (const tx of created) this.transactions.set(tx.id, tx);
+
+    // Mirror DrizzleStorage anchor logic so the in-memory fallback stays
+    // behaviorally equivalent.
+    const byAccount = new Map<string, Transaction[]>();
+    for (const r of created) {
+      const arr = byAccount.get(r.accountId) ?? [];
+      arr.push(r);
+      byAccount.set(r.accountId, arr);
+    }
+    for (const [acctId, txs] of Array.from(byAccount)) {
+      const acct = this.accounts.get(acctId);
+      if (!acct) continue;
+      if (!AUTO_BALANCE_TYPES.has(acct.type)) continue;
+      if (acct.currentBalance == null || !acct.balanceAsOfDate) continue;
+      const newer = txs.filter((t) => t.date > acct.balanceAsOfDate!);
+      if (newer.length === 0) continue;
+      const delta = newer.reduce((s, t) => s + t.amount, 0);
+      const maxDate = newer.reduce((m, t) => (t.date > m ? t.date : m), acct.balanceAsOfDate);
+      this.accounts.set(acctId, {
+        ...acct,
+        currentBalance: Math.round((acct.currentBalance + delta) * 100) / 100,
+        balanceAsOfDate: maxDate,
+      });
+    }
+
     return { created, skipped };
   }
 

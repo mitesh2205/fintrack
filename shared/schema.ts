@@ -10,6 +10,9 @@ export const accounts = sqliteTable("accounts", {
   lastFour: text("last_four"),
   color: text("color"),
   currentBalance: real("current_balance"), // user-provided live balance for Roj-Med Baki
+  // YYYY-MM-DD. Anchor for auto-balance: on import, transactions strictly
+  // newer than this date are summed into currentBalance and the anchor advances.
+  balanceAsOfDate: text("balance_as_of_date"),
 });
 
 export const transactions = sqliteTable("transactions", {

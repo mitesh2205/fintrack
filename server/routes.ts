@@ -330,7 +330,6 @@ export async function registerRoutes(
     function normalizePlatform(desc: string): string {
       const d = desc.toLowerCase();
       if (d.includes("robinhood")) return "Robinhood";
-      if (d.includes("apple gs")) return "Apple GS Savings";
       if (d.includes("dub")) return "DUB";
       return "Other";
     }
@@ -598,14 +597,17 @@ export async function registerRoutes(
       });
       if (cadenceTxs.length < 2) continue;
 
-      // Average days between consecutive same-magnitude transactions
-      let totalDays = 0;
+      // Median days between consecutive same-magnitude transactions.
+      // Median (vs mean) is robust to single-month gaps — e.g. one missed
+      // rent payment or an extra mid-cycle charge won't kick a recurring
+      // expense out of its cadence band.
+      const gaps: number[] = [];
       for (let i = 0; i < cadenceTxs.length - 1; i++) {
         const d1 = new Date(cadenceTxs[i].date).getTime();
         const d2 = new Date(cadenceTxs[i + 1].date).getTime();
-        totalDays += (d1 - d2) / (1000 * 60 * 60 * 24);
+        gaps.push((d1 - d2) / (1000 * 60 * 60 * 24));
       }
-      const avgDays = totalDays / (cadenceTxs.length - 1);
+      const avgDays = median(gaps);
 
       // Reject same-day clusters (e.g. multiple charges on the same day are
       // not a subscription cadence).
@@ -736,11 +738,12 @@ export async function registerRoutes(
       });
       if (cadenceTxs.length < 3) continue;
 
-      let totalD = 0;
+      // Median gap (see comment in /api/analytics/recurring above).
+      const gaps2: number[] = [];
       for (let i = 0; i < cadenceTxs.length - 1; i++) {
-        totalD += (new Date(cadenceTxs[i].date).getTime() - new Date(cadenceTxs[i + 1].date).getTime()) / 86400000;
+        gaps2.push((new Date(cadenceTxs[i].date).getTime() - new Date(cadenceTxs[i + 1].date).getTime()) / 86400000);
       }
-      const avgDays = totalD / (cadenceTxs.length - 1);
+      const avgDays = median(gaps2);
       if (avgDays < 5) continue;
 
       const isWeekly2       = avgDays >= 6   && avgDays <= 10;

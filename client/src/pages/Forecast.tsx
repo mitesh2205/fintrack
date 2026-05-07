@@ -138,6 +138,7 @@ const HORIZON_OPTIONS = [
   { label: "30 days", value: 30 },
   { label: "60 days", value: 60 },
   { label: "90 days", value: 90 },
+  { label: "180 days", value: 180 },
 ];
 
 export default function Forecast() {

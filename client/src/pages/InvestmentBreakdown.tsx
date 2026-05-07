@@ -46,10 +46,9 @@ interface InvestmentResponse {
 // ─── Platform config ──────────────────────────────────────────────────────────
 
 const PLATFORM_CONFIG: Record<string, { color: string; emoji: string; tagline: string }> = {
-  "Robinhood":        { color: "#00C805", emoji: "📈", tagline: "Stock & ETF trades" },
-  "Apple GS Savings": { color: "#0071e3", emoji: "🍎", tagline: "High-yield savings" },
-  "DUB":              { color: "#FF6B35", emoji: "🎯", tagline: "Auto-pilot portfolio" },
-  "Other":            { color: "#8b5cf6", emoji: "💼", tagline: "Other investments" },
+  "Robinhood": { color: "#00C805", emoji: "📈", tagline: "Stock & ETF trades" },
+  "DUB":       { color: "#FF6B35", emoji: "🎯", tagline: "Auto-pilot portfolio" },
+  "Other":     { color: "#8b5cf6", emoji: "💼", tagline: "Other investments" },
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
